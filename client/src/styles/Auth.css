@@ -1,0 +1,80 @@
+.auth-page{
+    width: 100%;
+    height: 100vh;
+}
+
+.auth-page form{
+    gap: 2rem;
+    border: 1px solid var(--border-color);
+    border-radius: 1rem;
+    width: 90%;
+    max-width: 400px;
+    padding: 2.5rem;
+}
+
+.auth-page form h2{
+    font-size: 3rem;
+}
+
+.auth-page form .flex i{
+    font-size: 4rem;
+    margin-top: .3rem;
+    color: var(--primary-color);
+}
+
+.auth-page form .inputs{
+    width: 100%;
+    gap: 2rem;
+}
+
+.auth-page form .input-grp{
+    align-items: start;
+    width: 100%;
+    gap: .5rem;
+}
+
+.auth-page form input{
+    padding: 1rem;
+    border-radius: 2rem;
+    border: 1px solid var(--border-color);
+    font-size: 1.5rem;
+    background-color: transparent;
+    width: 100%;
+}
+
+.auth-page form label{
+    font-weight: 600;
+    font-size: 1.5rem;
+}
+
+/* Password field wrapper */
+.password-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.password-wrapper input {
+  padding-right: 3rem; /* space for icon */
+}
+
+/* Eye icon */
+.toggle-icon {
+  position: absolute;
+  right: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 2rem;
+  color: var(--text-faded);
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.toggle-icon:hover {
+  color: var(--primary-color);
+}
+
+.auth-page form a{
+    color: var(--primary-color);
+    text-decoration: none;
+    font-weight: 600;
+}
