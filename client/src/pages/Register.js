@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Eye, EyeOff, MessageCircle } from "lucide-react";
+import { Eye, EyeOff, MessageCircle, AlertCircle } from "lucide-react";
 import { useNavigate, Link } from "react-router-dom";
 import { register } from "../utils/api";
-import { setToken } from "../utils/auth";
+import { setToken, setUser } from "../utils/auth";
 
 import "../styles/Auth.css";
 
@@ -46,7 +46,7 @@ export default function Register() {
       return;
     }
 
-    // Optional: ensure password strength before submission
+    // ensure password strength before submission
     if (strength === "Weak") {
       setError("Please use a stronger password");
       return;
@@ -58,7 +58,10 @@ export default function Register() {
         email: form.email,
         password: form.password1,
       });
+
+      // On successful registration, save token and user data
       setToken(data.token);
+      setUser(data);
       navigate("/chat");
     } catch (err) {
       setError(err.message || "Registration failed");
@@ -77,10 +80,17 @@ export default function Register() {
           Real-time messaging platform
         </p>
 
+        {error && 
+          <div className="auth--error">
+            <AlertCircle size={16}/>
+            <p>{error}</p>
+          </div>
+        }
+
         <div className="inputs flex-cl">
           <div className="input-grp flex-cl">
             <label htmlFor="username">Username</label>
-            <input name="username" onChange={handleChange} required />
+            <input name="username" onChange={handleChange} required autoComplete="username"/>
           </div>
 
           <div className="input-grp flex-cl">
@@ -90,6 +100,7 @@ export default function Register() {
               type="email"
               onChange={handleChange}
               required
+              autoComplete="email"
             />
           </div>
 
@@ -101,6 +112,7 @@ export default function Register() {
                 type={showPass1 ? "text" : "password"}
                 onChange={handleChange}
                 required
+                autoComplete="password"
               />
               <div
                 className="toggle-icon"
@@ -135,6 +147,7 @@ export default function Register() {
                 type={showPass2 ? "text" : "password"}
                 onChange={handleChange}
                 required
+                autoComplete="confirm password"
               />
               <div
                 className="toggle-icon"
@@ -147,9 +160,7 @@ export default function Register() {
           </div>
         </div>
 
-        {error && <p className="small-text" style={{ color: "red", width: "100%" }}>{error}</p>}
-
-        <button type="submit" className="primary-btn">
+        <button type="submit" className="button button--primary">
           Register
         </button>
 

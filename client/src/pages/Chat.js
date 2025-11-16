@@ -1,127 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Send, Paperclip, Smile, Hash } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {useNavigate} from 'react-router-dom';
 
-import Sidebar from '../components/Sibebar';
-import Message from '../components/Message';
-import RoomHeader from '../components/RoomHeader';
+import Sidebar from '../components/Sidebar';
+import ChatRoom from '../components/ChatRoom';
 import RoomInfoPanel from '../components/RoomInfoPanel';
+import RoomModal from '../components/RoomModal';
+import ExploreRoomsList from '../components/ExploreRoomsList';
+
+import { getRooms, getRoomMessages, joinRoom } from '../utils/api';
+import { getToken, getUser, removeAuth } from '../utils/auth';
 
 import "../styles/Chat.css"
-
-// Mock Data
-const mockUser = { id: 1, username: 'John Doe', avatar: 'JD' };
-
-const mockRooms = [
-  { id: 1, name: 'Design Team', description: 'UI/UX discussions', lastMessage: 'Great work on the mockups!', lastMessageTime: '2m ago', unread: 3, isPrivate: false, members: 12, avatar: '🎨' },
-  { id: 2, name: 'Dev Squad', description: 'Development updates', lastMessage: 'Pushed to production', lastMessageTime: '15m ago', unread: 0, isPrivate: false, members: 8, avatar: '💻' },
-  { id: 3, name: 'Marketing', description: 'Campaign strategies', lastMessage: 'Meeting at 3pm', lastMessageTime: '1h ago', unread: 1, isPrivate: false, members: 5, avatar: '📢' },
-  { id: 4, name: 'Sarah Wilson', description: null, lastMessage: 'Thanks for the update', lastMessageTime: '2h ago', unread: 0, isPrivate: true, members: 2, avatar: 'SW' },
-];
-
-const mockMessages = [
-  { id: 1, senderId: 2, sender: 'Alice Cooper', text: 'Hey everyone! How are we doing with the new design?', timestamp: '10:30 AM', avatar: 'AC', read: true },
-  { id: 2, senderId: 1, sender: 'John Doe', text: 'Making good progress! Just finishing up the mobile views.', timestamp: '10:32 AM', avatar: 'JD', read: true },
-  { id: 3, senderId: 3, sender: 'Bob Smith', text: 'I have some feedback on the color scheme', timestamp: '10:35 AM', avatar: 'BS', read: true },
-  { id: 4, senderId: 2, sender: 'Alice Cooper', text: 'Sure! Let me know your thoughts', timestamp: '10:36 AM', avatar: 'AC', read: true },
-  { id: 5, senderId: 1, sender: 'John Doe', text: 'Great work on the mockups! The new layout looks fantastic.', timestamp: '10:40 AM', avatar: 'JD', read: false },
-];
-
-const mockRoomMembers = [
-  { id: 1, username: 'John Doe', avatar: 'JD', role: 'admin', status: 'online' },
-  { id: 2, username: 'Alice Cooper', avatar: 'AC', role: 'member', status: 'online' },
-  { id: 3, username: 'Bob Smith', avatar: 'BS', role: 'member', status: 'away' },
-  { id: 4, username: 'Carol White', avatar: 'CW', role: 'member', status: 'offline' },
-  { id: 5, username: 'David Brown', avatar: 'DB', role: 'member', status: 'online' },
-];
-
-// Room Header Component
-
-
-// Chat Room Component
-const ChatRoom = ({ room, messages, currentUser, onSendMessage, isMobile, onBackClick, onInfoClick }) => {
-  const [inputMessage, setInputMessage] = useState('');
-  const messagesEndRef = useRef(null);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  const handleSend = () => {
-    if (inputMessage.trim()) {
-      onSendMessage(inputMessage);
-      setInputMessage('');
-    }
-  };
-
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-  
-  // Auto-resize textarea
-  const handleTextareaChange = (e) => {
-    setInputMessage(e.target.value);
-    e.target.style.height = 'auto'; // Reset height
-    e.target.style.height = `${e.target.scrollHeight}px`; // Set to scroll height
-  };
-
-  if (!room) {
-    return (
-      <div className="chat-room-placeholder">
-        <div className="chat-room-placeholder__content">
-          <Hash className="chat-room-placeholder__icon" />
-          <h3 className="chat-room-placeholder__title">Select a conversation</h3>
-          <p className="chat-room-placeholder__subtitle">Choose a room from the sidebar to start chatting</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="chat-room">
-      <RoomHeader room={room} onInfoClick={onInfoClick} onBackClick={onBackClick} isMobile={isMobile} />
-
-      {/* Messages */}
-      <div className="chat-room__messages">
-        {messages.map(msg => (
-          <Message key={msg.id} message={msg} isOwn={msg.senderId === currentUser.id} />
-        ))}
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Input */}
-      <div className="chat-room__input-area">
-        <div className="chat-room__input-inner">
-          <button className="icon-button">
-            <Paperclip />
-          </button>
-          <div className="chat-room__input-wrapper">
-            <textarea
-              value={inputMessage}
-              onChange={handleTextareaChange}
-              onKeyPress={handleKeyPress}
-              placeholder="Type a message..."
-              rows={1}
-              className="chat-room__textarea"
-            />
-            <button className="chat-room__smiley-button">
-              <Smile />
-            </button>
-          </div>
-          <button
-            onClick={handleSend}
-            disabled={!inputMessage.trim()}
-            className="send-button"
-          >
-            <Send />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 
 // Main App Component
@@ -130,6 +19,12 @@ export default function Chat() {
   const [showSidebar, setShowSidebar] = useState(false);
   const [showRoomInfo, setShowRoomInfo] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [currentUser, setCurrentUser] = useState({ id: 0, username: 'User', avatar: 'U' });
+  const [rooms, setRooms] = useState([]);
+  const [messages, setMessages] = useState([]);
+  const [showCreateModal, setShowCreateModal] = useState(false); 
+  const ws = useRef(null);
+  const [currentView, setCurrentView] = useState('joined');
 
   useEffect(() => {
     const handleResize = () => {
@@ -144,13 +39,176 @@ export default function Chat() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  const navigate = useNavigate();
+
+  // --- Utility for Handling Expired Tokens ---
+  const handleAuthError = (error) => {
+    if (error.message.includes("Invalid token") || error.message.includes("is not authenticated")) {        
+        // 1. Clear token/user data from localStorage
+        removeAuth();
+
+        // 2. Redirect to the login page
+        navigate('/login');
+        
+        // Close WebSocket if it was open on a bad token
+        if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+            ws.current.close();
+        }
+        return true; 
+    }
+    return false;
+  };
+
+  // --- Initial Data Loading & User Info ---
+  useEffect(() => {
+    // 1. Get Logged in User Data
+    const loggedUser = getUser();
+    if (loggedUser) {
+        setCurrentUser(loggedUser);
+    } else {
+        navigate('/login');
+        return;
+    }
+
+    // 2. Fetch Rooms
+    const fetchRooms = async () => {
+      try {
+        const fetchedRooms = await getRooms();
+        setRooms(fetchedRooms || []);
+      } catch (error) {
+        console.error("Failed to fetch rooms:", error);
+
+        if (handleAuthError(error)) {
+            return; 
+        }
+      }
+    };
+    fetchRooms();
+  }, []); // Empty dependency array means this runs once on mount
+
+  // --- WebSocket Setup ---
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+
+    const WS_URL = `ws://localhost:8080/ws?token=${token}`; 
+
+    ws.current = new WebSocket(WS_URL);
+
+    ws.current.onopen = () => {
+      console.log('WebSocket connected');
+
+      if (activeRoomId) {
+        ws.current.send(JSON.stringify({ type: 'joinRoom', room_id: activeRoomId }));
+      }
+    };
+
+    ws.current.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      console.log('WS Message received:', data);
+
+      if (data.type === 'roomMessage' && data.Message) {
+        // Map the Go Message struct to your React Message format
+        const newMessage = {
+            id: data.Message.id,
+            senderId: data.Message.sender_id,
+            sender: data.Message.sender,
+            text: data.Message.text,
+            timestamp: new Date(data.Message.timestamp).toLocaleTimeString(),
+            avatar: data.Message.avatar,
+            read: true,
+        };
+
+        setMessages(prev => {
+            // Only add if it belongs to the active room
+            if (activeRoomId === data.Message.room_id) {
+                return [...prev, newMessage];
+            }
+            return prev;
+        });
+
+        // OPTIONAL: Update room's last message in the rooms list
+        setRooms(prevRooms => prevRooms.map(r => r.id === data.Message.room_id ? { ...r, lastMessage: data.Message.text, lastMessageTime: 'Just now' } : r));
+      }
+    };
+
+    ws.current.onclose = () => {
+      console.log('WebSocket closed');
+    };
+
+    ws.current.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+
+    // --- CRITICAL CLEANUP FUNCTION ---
+    return () => {
+        // If the connection is open or connecting, close it gracefully.
+        // This runs when the component unmounts OR when React Strict Mode cleans up the effect.
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+            ws.close(1000, "Component unmount/cleanup"); // Use 1000 for normal closure
+            console.log("WebSocket cleanup: closed connection.");
+        }
+    };
+  }, [activeRoomId]);
+
+  // --- Room Selection and Message Fetching ---
+  const fetchMessages = useCallback(async (roomId) => {
+    try {
+      const fetchedMessages = await getRoomMessages(roomId);
+      // Map the Go Message struct fields to your frontend fields
+      const formattedMessages = fetchedMessages.map(m => ({
+        id: m.id,
+        senderId: m.sender_id,
+        sender: m.sender,
+        text: m.text,
+        timestamp: new Date(m.timestamp).toLocaleTimeString(),
+        avatar: m.avatar,
+        read: true,
+      }));
+      setMessages(formattedMessages);
+
+      setActiveRoomId(roomId);
+
+    } catch (error) {
+      console.error("Failed to fetch messages:", error);
+      setMessages([]);
+    }
+  }, []);
+
+
+  // --- Event Handlers ---
+  const handleSendMessage = (text) => {
+    if (!activeRoomId || !ws.current || ws.current.readyState !== WebSocket.OPEN) {
+      console.error('WebSocket not ready or no active room');
+      return;
+    }
+
+    const messagePayload = {
+      type: 'sendMessage',
+      room_id: activeRoomId,
+      content: text,
+    };
+    
+    ws.current.send(JSON.stringify(messagePayload));
+  };
+  
+  const handleRoomCreated = (newRoom) => {
+    // Add the new room to the state instantly
+    setRooms(prevRooms => [newRoom, ...prevRooms]);
+    // Optionally set it as active
+    setActiveRoomId(newRoom.id);
+    fetchMessages(newRoom.id);
+  };
+
+  const activeRoom = rooms.find(r => r.id === activeRoomId);
+  const currentLoggedUser = currentUser;
   
   // Recalculate isMobile for RoomInfoPanel prop
   // This is a bit redundant but ensures the prop is correct
   // We can simplify this logic.
   const isMobileView = window.innerWidth < 768;
 
-  const activeRoom = mockRooms.find(r => r.id === activeRoomId);
 
   const handleRoomSelect = (roomId) => {
     setActiveRoomId(roomId);
@@ -169,15 +227,6 @@ export default function Chat() {
     setActiveRoomId(null);
     setShowSidebar(true);
   };
-
-  const handleSendMessage = (text) => {
-    console.log('Sending message:', text);
-    // Here you would add the new message to the mockMessages state
-  };
-
-  const handleNewRoom = () => {
-    console.log('Creating new room');
-  };
   
   const handleToggleRoomInfo = () => {
     setShowRoomInfo(prev => !prev);
@@ -188,45 +237,104 @@ export default function Chat() {
   const showMiddlePanel = !isMobile || (isMobile && activeRoomId);
   const showRightPanel = showRoomInfo && (!isMobile || (isMobile && activeRoomId));
 
+  const handleViewExplore = () => {
+    setCurrentView('explore');
+  };
+
+  const handleBackToJoined = () => {
+    setCurrentView('joined');
+  };
+
+const handleJoinRoom = async (roomId) => {
+    try {
+      // 1. API call to join the room, returns the full room object
+      const newRoom = await joinRoom(roomId); 
+
+      // 2. Update the joined rooms list by appending the new room
+      setRooms(prevRooms => [newRoom, ...prevRooms]);
+
+      // 3. Switch back to the joined view and select the new room
+      setActiveRoomId(roomId);
+      setCurrentView('joined');
+      
+      // OPTIONAL: If on mobile, close the sidebar
+      if (isMobile) {
+        setShowSidebar(false);
+      }
+
+    } catch (error) {
+      console.error("Failed to join room:", error);
+      if (handleAuthError(error)) return;
+      
+      // Handle other join errors (e.g., already a member)
+      alert(`Could not join room: ${error.message}`);
+    }
+  };
+
+  const renderSidebar = () => {
+    if (currentView === 'explore') {
+      return (
+        <ExploreRoomsList 
+          onBack={handleBackToJoined} 
+          onJoin={handleJoinRoom}
+        />
+      );
+    }
+    
+    // Default: 'joined' view
+    return (
+      <Sidebar
+        rooms={rooms}
+        activeRoomId={activeRoomId}
+        onRoomSelect={handleRoomSelect}
+        onNewRoom={() => setShowCreateModal(true)}
+        onViewExplore={handleViewExplore} // New prop name used here
+        isMobile={isMobile}
+        onClose={() => setShowSidebar(false)}
+        currentUser={currentLoggedUser}
+      />
+    );
+  };
+
   return (
     <div className="chat-app">
       
       {/* Sidebar - Desktop always visible, Mobile conditional */}
       {showLeftPanel && (
-        <Sidebar
-          rooms={mockRooms}
-          activeRoomId={activeRoomId}
-          onRoomSelect={handleRoomSelect}
-          onNewRoom={handleNewRoom}
-          isMobile={isMobile}
-          onClose={() => setShowSidebar(false)}
-        />
+        renderSidebar()
       )}
 
       {/* Chat Room - Desktop always visible, Mobile conditional */}
-      {showMiddlePanel && (
+      {showMiddlePanel &&  (
         <ChatRoom
           room={activeRoom}
-          messages={mockMessages}
-          currentUser={mockUser}
+          messages={messages}
+          currentUser={currentLoggedUser}
           onSendMessage={handleSendMessage}
           isMobile={isMobile}
           onBackClick={handleBackToRooms}
           onInfoClick={handleToggleRoomInfo}
+          hasRooms={rooms && rooms.length > 0}
         />
       )}
 
       {/* Room Info Panel - Desktop sidebar, Mobile overlay */}
-      {showRightPanel && (
+      {showRightPanel && activeRoom && (
         <RoomInfoPanel
           room={activeRoom}
-          members={mockRoomMembers}
+          members={[]}
           isOpen={showRoomInfo}
           onClose={() => setShowRoomInfo(false)}
-          currentUser={mockUser}
+          currentUser={currentLoggedUser}
           isMobile={isMobile}
         />
       )}
+
+      <RoomModal 
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onRoomCreated={handleRoomCreated}
+      />
     </div>
   );
 }

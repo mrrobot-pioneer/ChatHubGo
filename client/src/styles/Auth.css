@@ -5,7 +5,7 @@
 
 .auth-page form{
     gap: 2rem;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--gray-200);
     border-radius: 1rem;
     width: 90%;
     max-width: 400px;
@@ -36,7 +36,7 @@
 .auth-page form input{
     padding: 1rem;
     border-radius: 2rem;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--gray-200);
     font-size: 1.5rem;
     background-color: transparent;
     width: 100%;
@@ -71,6 +71,20 @@
 
 .toggle-icon:hover {
   color: var(--primary-color);
+}
+
+.auth-page .auth--error{
+    width: 100%;
+    background-color: var(--red-50);
+    color: var(--red-600);
+    border: 1px solid var(--red-600);
+    padding: 1rem;
+    border-radius: 1rem;
+    font-size: 1.4rem;
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    justify-content: flex-start !important;
 }
 
 .auth-page form a{

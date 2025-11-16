@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Eye, EyeOff, MessageCircle } from "lucide-react";
+import { Eye, EyeOff, MessageCircle, AlertCircle } from "lucide-react";
 import { useNavigate, Link } from "react-router-dom";
 import { login } from "../utils/api";
-import { setToken } from "../utils/auth";
+import { setToken,setUser } from "../utils/auth";
 
 import "../styles/Auth.css";
 
@@ -19,7 +19,11 @@ export default function Login() {
     e.preventDefault();
     try {
       const data = await login(form);
+      
+      // On successful login, save token and user data
       setToken(data.token);
+      setUser(data);
+      
       navigate("/chat");
     } catch (err) {
       setError(err.message);
@@ -38,10 +42,17 @@ export default function Login() {
           Real-time messaging platform
         </p>
 
+        {error && 
+          <div className="auth--error">
+            <AlertCircle size={16}/>
+            <p>{error}</p>
+          </div>
+        }
+
         <div className="inputs flex-cl">
           <div className="input-grp flex-cl">
             <label htmlFor="username">Username</label>
-            <input name="username" onChange={handleChange} required />
+            <input name="username" onChange={handleChange} required autoComplete="username"/>
           </div>
           <div className="input-grp flex-cl password-field">
             <label htmlFor="password">Password</label>
@@ -51,6 +62,7 @@ export default function Login() {
                 type={showPass ? "text" : "password"}
                 onChange={handleChange}
                 required
+                autoComplete="password"
               />
               <div
                 className="toggle-icon"
@@ -63,9 +75,7 @@ export default function Login() {
           </div>
         </div>
 
-        {error && <p className="small-text" style={{ color: "red", width: "100%" }}>{error}</p>}
-
-        <button type="submit" className="primary-btn">Login</button>
+        <button type="submit" className="button button--primary">Login</button>
 
         <p style={{color: "var(--text-faded)"}}>
           Don't have an account? <Link to="/register">Register</Link>
