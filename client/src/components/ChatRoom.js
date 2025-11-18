@@ -73,7 +73,6 @@ const ChatRoom = ({ room, messages, currentUser, onSendMessage, isMobile, onBack
         isMobile={isMobile}
         />
 
-        {/* Messages */}
         <div className="chat-room__messages">
         {messages.map(msg => (
             <Message key={msg.id} message={msg} isOwn={msg.senderId === currentUser.id} currentUser={currentUser}/>
@@ -81,7 +80,6 @@ const ChatRoom = ({ room, messages, currentUser, onSendMessage, isMobile, onBack
         <div ref={messagesEndRef} />
         </div>
 
-        {/* Input */}
         <div className="chat-room__input-area">
         <div className="chat-room__input-inner">
             <button className="icon-button">

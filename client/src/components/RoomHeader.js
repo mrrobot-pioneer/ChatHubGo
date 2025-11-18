@@ -11,7 +11,7 @@ const RoomHeader = ({ room, onInfoClick, onBackClick, isMobile }) => {
             <ArrowLeft />
           </button>
         )}
-        <Avatar size="md">{room?.avatar}</Avatar>
+        <Avatar size="md" username={room?.name}>{room?.avatar}</Avatar>
         <div>
           <h2 className="room-header__name">
             <span>{room?.name}</span>

@@ -24,66 +24,66 @@ async function handleApiError(response, defaultMessage) {
 
 // Utility to register a new user
 export async function register({ username, email, password }) {
-  const res = await fetch(`${API_BASE_URL}/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, email, password }),
-  });
-    
-  if (!res.ok) {
+  const res = await fetch(`${API_BASE_URL}/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, email, password }),
+  });
+
+  if (!res.ok) {
         // 🌟 FIX: Use the new helper to get the server's error message
         await handleApiError(res, "Registration failed. Please check your details.");
     }
-  return res.json();
+  return res.json();
 }
 
 // Utility to login a user
 export async function login({ username, password }) {
-  const res = await fetch(`${API_BASE_URL}/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
+  const res = await fetch(`${API_BASE_URL}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
 
-  if (!res.ok) {
+  if (!res.ok) {
         // 🌟 FIX: Use the new helper to get the server's error message
         await handleApiError(res, "Login failed. Invalid username or password.");
     }
-  return res.json();
+  return res.json();
 }
 
 // Protected fetch utility
 async function protectedFetch(url, options = {}) {
-  const token = getToken();
-  if (!token) {
-    // Specific error message for frontend handling (redirect)
-    throw new Error('User is not authenticated'); 
-  }
+  const token = getToken();
+  if (!token) {
+    // Specific error message for frontend handling (redirect)
+    throw new Error('User is not authenticated');
+  }
 
-  const defaultHeaders = {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`,
-  };
+  const defaultHeaders = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`,
+  };
 
-  const response = await fetch(API_BASE_URL + url, {
-    ...options,
-    headers: {
-      ...defaultHeaders,
-      ...options.headers,
-    },
-  });
+  const response = await fetch(API_BASE_URL + url, {
+    ...options,
+    headers: {
+      ...defaultHeaders,
+      ...options.headers,
+    },
+  });
 
-  if (!response.ok) {
-    // This existing logic already handles server errors well
+  if (!response.ok) {
+    // This existing logic already handles server errors well
     // It's functionally identical to handleApiError now, but kept separate for clarity
     // in handling the protected logic.
-    let errorText = 'An unknown error occurred';
-    try {
-      const errorData = await response.text();
-      errorText = errorData || errorText;
-    } catch {
+    let errorText = 'An unknown error occurred';
+    try {
+      const errorData = await response.text();
+      errorText = errorData || errorText;
+    } catch {
     // Ignore if response body is not readable
-      }
+      }
     throw new Error(errorText);
  }
   return response.json();
@@ -114,7 +114,40 @@ export const getAllRooms = () => {
 
 // API to join a specific room
 export const joinRoom = (roomId) => {
-  return protectedFetch(`/rooms/${roomId}/join`, {
-    method: 'POST',
-  });
+  return protectedFetch(`/rooms/${roomId}/join`, {
+    method: 'POST',
+  });
+};
+
+// API to mark all messages in a room as read
+export const markRoomAsRead = (roomId) => {
+  return protectedFetch(`/rooms/${roomId}/read`, {
+    method: 'POST',
+  });
+};
+
+// API to get room members
+export const getRoomMembers = (roomId) => {
+  return protectedFetch(`/rooms/${roomId}/members`);
+};
+
+// API to remove a member from a room (admin only)
+export const removeMember = (roomId, memberId) => {
+  return protectedFetch(`/rooms/${roomId}/members/${memberId}`, {
+    method: 'DELETE',
+  });
+};
+
+// API to delete a room (admin only)
+export const deleteRoom = (roomId) => {
+  return protectedFetch(`/rooms/${roomId}`, {
+    method: 'DELETE',
+  });
+};
+
+// API to leave a room
+export const leaveRoom = (roomId) => {
+  return protectedFetch(`/rooms/${roomId}/leave`, {
+    method: 'POST',
+  });
 };

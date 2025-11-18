@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { Plus, Search, X, Lock, MessageCircle, ChevronRight } from 'lucide-react';
+import { Plus, Search, X, Lock, MessageCircle, ChevronRight, Check, CheckCheck, LogOut } from 'lucide-react';
 import Avatar from './Avator';
 
 // Ensure this utility file exists and is correctly implemented
 import { formatSystemMessage } from '../utils/messageUtils';
 
-// 🌟 Added 'currentUser' to the destructured props
-const Sidebar = ({ rooms, activeRoomId, onRoomSelect, onNewRoom, onViewExplore, isMobile, onClose, currentUser }) => {
+// 🌟 Added 'currentUser' and 'onLogout' to the destructured props
+const Sidebar = ({ rooms, activeRoomId, onRoomSelect, onNewRoom, onViewExplore, isMobile, onClose, currentUser, onLogout }) => {
     const [searchQuery, setSearchQuery] = useState('');
 
     const filteredRooms = rooms.filter(room =>
@@ -69,7 +69,7 @@ const Sidebar = ({ rooms, activeRoomId, onRoomSelect, onNewRoom, onViewExplore, 
                                 className={`room-item ${activeRoomId === room.id ? 'room-item--active' : ''}`}
                             >
                                 <div className="room-item__inner">
-                                    <Avatar size="lg">{room.avatar}</Avatar>
+                                    <Avatar size="lg" username={room.name}>{room.avatar}</Avatar>
                                     <div className="room-item__content">
                                         <div className="room-item__header">
                                             <h3 className="room-item__name">
@@ -79,12 +79,22 @@ const Sidebar = ({ rooms, activeRoomId, onRoomSelect, onNewRoom, onViewExplore, 
                                             <span className="room-item__time" style={{ color: room.unread > 0 ? "var(--primary-color)" : "var(--gray-300)"}}>{room.lastMessageTime}</span>
                                         </div>
                                         {/* 🌟 Using the formatted message */}
-                                        <p className="room-item__message">{formattedLastMessage}</p> 
-                                        <div className="room-item__meta">
-                                            <span className="room-item__meta-text">{room.members} members</span>
-                                            {room.unread > 0 && (
-                                                <span className="room-item__unread">{room.unread}</span>
+                                        <p className="room-item__message">
+                                            {room.lastSenderId === currentUser.id && (
+                                                <span className="room-item__message-status">
+                                                    {room.lastMessageRead ? (
+                                                        <CheckCheck size={14} className="message-read-tick" />
+                                                    ) : (
+                                                        <Check size={14} className="message-sent-tick" />
+                                                    )}
+                                                </span>
                                             )}
+                                            {formattedLastMessage}
+                                        </p> 
+                                        <div className="room-item__meta">
+                                            <span className={`room-item__unread ${room.unread > 0 ? 'room-item__unread--visible' : ''}`}>
+                                                {room.unread || 0}
+                                            </span>
                                         </div>
                                     </div>
                                 </div>
@@ -119,6 +129,24 @@ const Sidebar = ({ rooms, activeRoomId, onRoomSelect, onNewRoom, onViewExplore, 
                 <p className="explore-item__description">
                     Browse through all public chat rooms and find new communities to engage with.
                 </p>
+            </div>
+
+            {/* User Profile Section with Logout */}
+            <div className="sidebar__user-profile">
+                <div className="user-profile__info">
+                    <Avatar size="md" username={currentUser?.username}>{currentUser?.avatar}</Avatar>
+                    <div className="user-profile__details">
+                        <h3 className="user-profile__name">{currentUser?.username}</h3>
+                        <p className="user-profile__status">Online</p>
+                    </div>
+                </div>
+                <button
+                    onClick={onLogout}
+                    className="icon-button icon-button--logout"
+                    title="Logout"
+                >
+                    <LogOut size={20} />
+                </button>
             </div>
 
         </div>

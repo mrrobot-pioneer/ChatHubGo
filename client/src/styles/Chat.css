@@ -45,6 +45,38 @@
       color: var(--red-600);
     }
 
+    .button--danger {
+      width: 100%;
+      background-color: var(--red-600);
+      color: #fff;
+      border: none;
+      transition: all 0.2s;
+    }
+    .button--danger:hover {
+      opacity: 0.85;
+    }
+    .button--danger .button__icon {
+      color: white;
+    }
+
+    .icon-button--danger {
+      padding: 0.4rem;
+      border: none;
+      background: none;
+      cursor: pointer;
+      border-radius: 50%;
+      transition: background-color 0.2s;
+      line-height: 0;
+    }
+    .icon-button--danger:hover {
+      background-color: var(--red-50);
+    }
+    .icon-button--danger svg {
+      width: 1.8rem;
+      height: 1.8rem;
+      color: var(--red-600);
+    }
+
     /* Avatar Component */
     .avatar {
       position: relative;
@@ -52,12 +84,13 @@
     }
     .avatar__body {
       border-radius: 50%;
-      background-color: var(--primary-color);
       display: flex;
       align-items: center;
       justify-content: center;
-      color: white;
+      color: #ffffff;
       font-weight: 600;
+      text-transform: uppercase;
+      transition: background-color 0.2s ease;
     }
     .avatar--sm .avatar__body {
       width: 3.2rem;
@@ -260,19 +293,40 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .room-item__message-status {
+      display: inline-flex;
+      flex-shrink: 0;
+    }
+    .message-sent-tick {
+      color: var(--gray-400);
+    }
+    .message-read-tick {
+      color: var(--primary-color);
     }
     .room-item__meta {
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      justify-content: flex-end;
       margin-top: 0.4rem;
+      min-height: 2rem;
     }
     .room-item__unread {
       padding: 0.2rem 0.8rem;
-      background-color: var(--primary-color);
-      color: white;
+      background-color: transparent;
+      color: transparent;
       font-size: 1.2rem;
       border-radius: 9999px;
+      min-width: 2.4rem;
+      text-align: center;
+      transition: all 0.2s ease;
+    }
+    .room-item__unread--visible {
+      background-color: var(--primary-color);
+      color: white;
     }
 
     /* Room Header Component */
@@ -341,6 +395,62 @@
     color: var(--gray-500);
     padding: 0 1.1rem;
     font-size: 1.3rem;
+  }
+
+  /* User Profile Section */
+  .sidebar__user-profile {
+    border-top: 1px solid var(--gray-200);
+    padding: 1.2rem 1.6rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-shrink: 0;
+    background-color: var(--gray-50);
+  }
+
+  .user-profile__info {
+    display: flex;
+    align-items: center;
+    gap: 1.2rem;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .user-profile__details {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .user-profile__name {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--gray-800);
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .user-profile__status {
+    font-size: 1.2rem;
+    color: var(--gray-500);
+    margin: 0.2rem 0 0 0;
+  }
+
+  .icon-button--logout {
+    padding: 0.8rem;
+    flex-shrink: 0;
+  }
+
+  .icon-button--logout:hover {
+    background-color: var(--red-50);
+  }
+
+  .icon-button--logout svg {
+    width: 2rem;
+    height: 2rem;
+    color: var(--red-600);
   }
 
   /* --- Explore View Header --- */
@@ -679,6 +789,20 @@
       height: 1.5rem;
       color: var(--gray-300);
     }
+    .message__sent-receipt--pending {
+      opacity: 0.5;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    /* Pending message styles */
+    .message--pending {
+      opacity: 0.7;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.5; }
+      50% { opacity: 0.8; }
+    }
 
   /* --- System Message Styling --- */
   .message-item--system {
@@ -839,6 +963,27 @@
     .room-info__leave {
       padding: 1.6rem;
       border-top: 1px solid var(--gray-200);
+    }
+
+    .room-info__admin-actions {
+      padding: 1.6rem;
+      border-top: 1px solid var(--gray-200);
+    }
+
+    .room-info__loading,
+    .room-info__error {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1.2rem;
+      padding: 2.4rem;
+      color: var(--gray-500);
+      font-size: 1.4rem;
+    }
+
+    .room-info__error {
+      color: var(--red-600);
     }
     
     /* Responsive Media Queries */

@@ -7,14 +7,14 @@ Users can create rooms, join public chat rooms, and chat instantly with others.
 
 ## 🚀 Features
 
-### 🖥 Backend (Golang)
+### 🖥 Server (Golang)
 - JWT authentication middleware  
 - Create & join chat rooms  
 - Explore all public rooms  
 - WebSocket real-time messaging  
 - Secure context handling (typed context keys)  
 
-### 💬 Frontend (React)
+### 💬 Client (React)
 - Modern and fast UI  
 - Explore Rooms page with:
   - Room name  
@@ -28,34 +28,33 @@ Users can create rooms, join public chat rooms, and chat instantly with others.
 
 ## 🛠 Tech Stack
 
-### Backend
+### Server
 - Go 1.22+
 - Gorilla Mux
 - WebSockets
 - PostgreSQL
 - JWT authentication
 
-### Frontend
+### Client
 - React 18
 - Axios
 - Custom CSS
 
 ---
-
+## 📦 Installation & Setup
 
 ### Backend (Go)
 ```sh
-cd backend
+cd server
 go mod tidy
 go run main.go
 
----
 ```
-## Frontend (React)
+### Frontend (React)
 ```sh
-cd frontend
+cd client
 npm install
-npm run dev
+npm start
 
 ```
 ## 🔐 Authentication Flow

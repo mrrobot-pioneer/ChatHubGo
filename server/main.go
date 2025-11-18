@@ -15,10 +15,10 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/gorilla/mux" // Using gorilla/mux for easier route parameters
+	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 	"github.com/joho/godotenv"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 var db *sql.DB
@@ -42,7 +42,6 @@ type Room struct {
 	Description string    `json:"description,omitempty"`
 	CreatedBy   int       `json:"created_by"`
 	CreatedAt   time.Time `json:"created_at"`
-	// Fields from frontend mock, added for consistency
 	LastMessage     string `json:"lastMessage"`
 	LastSenderID    int    `json:"lastSenderId"`
 	LastMessageTime string `json:"lastMessageTime"`
@@ -141,20 +140,7 @@ func initDB() {
 }
 
 func createTables() {
-	// // START: ADDED DROP TABLE STATEMENTS
-    // dropSchema := `
-    // -- Drop tables in order of dependency
-    // DROP TABLE IF EXISTS messages CASCADE;
-    // DROP TABLE IF EXISTS room_members CASCADE;
-    // DROP TABLE IF EXISTS rooms CASCADE;
-    // DROP TABLE IF EXISTS users CASCADE;
-    // `
-    // if _, err := db.Exec(dropSchema); err != nil {
-    //     // Log this as a fatal error if cleanup fails
-    //     log.Fatal("Failed to drop existing tables:", err) 
-    // }
-    // // END: ADDED DROP TABLE STATEMENTS
-
+	
 	schema := `
     CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
@@ -187,6 +173,16 @@ func createTables() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_messages_room_id_created_at ON messages(room_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS message_reads (
+        id SERIAL PRIMARY KEY,
+        message_id INT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(message_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_message_reads_user_message ON message_reads(user_id, message_id);
+    CREATE INDEX IF NOT EXISTS idx_message_reads_message ON message_reads(message_id);
     `
 
 	if _, err := db.Exec(schema); err != nil {
@@ -194,29 +190,32 @@ func createTables() {
 	}
 
 	// --- Create System User ---
-    // 1. Ensure the sequence starts at 1, even if dropped/recreated
-    if _, err := db.Exec("ALTER SEQUENCE users_id_seq RESTART WITH 1"); err != nil {
-        log.Fatal("Failed to reset users sequence:", err)
-    }
+	// Only create system user and adjust sequence if it doesn't exist
+	var systemUserExists bool
+	err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE id = 1)").Scan(&systemUserExists)
+	if err != nil {
+		log.Fatal("Failed to check for System user:", err)
+	}
 
-    // 2. Insert the System user (ID 1) if they don't exist.
-    // We use an empty password hash as this user cannot log in.
-    // The username 'System' is used, and the password_hash is set to a non-null placeholder.
-    systemUserSQL := `
-    INSERT INTO users (id, username, email, password_hash)
-    VALUES (1, 'System', 'system@chathub.io', 'SYSTEM_ACCOUNT_HASH')
-    ON CONFLICT (id) DO NOTHING;
-    `
-    if _, err := db.Exec(systemUserSQL); err != nil {
-        log.Fatal("Failed to create System user:", err)
-    }
+	if !systemUserExists {
+		// Create system user with explicit ID
+		systemUserSQL := `
+		INSERT INTO users (id, username, email, password_hash)
+		VALUES (1, 'System', 'system@chathub.io', 'SYSTEM_ACCOUNT_HASH');
+		`
+		if _, err := db.Exec(systemUserSQL); err != nil {
+			log.Fatal("Failed to create System user:", err)
+		}
 
-    // 3. Increment the sequence past 1 so that the next *real* user starts at ID 2
-    if _, err := db.Exec("SELECT setval('users_id_seq', 2, false)"); err != nil {
-        log.Fatal("Failed to update users sequence value:", err)
-    }
+		// Adjust sequence to start at 2 (only on first creation)
+		if _, err := db.Exec("SELECT setval('users_id_seq', 1, true)"); err != nil {
+			log.Fatal("Failed to update users sequence value:", err)
+		}
 
-    log.Println("✅ System user (ID 1) confirmed.")
+		log.Println("✅ System user (ID 1) created and sequence initialized.")
+	} else {
+		log.Println("✅ System user (ID 1) already exists.")
+	}
 }
 
 // --- Hub & Manager Logic ---
@@ -235,10 +234,8 @@ func (m *RoomManager) Run() {
 		select {
 		case client := <-m.Register:
 			log.Printf("Client %s connected", client.Username)
-			// Don't add to any room yet, wait for 'joinRoom' message
 		case client := <-m.Unregister:
 			log.Printf("Client %s disconnected", client.Username)
-			// Remove client from all rooms they are in
 			m.mu.Lock()
 			for _, hub := range m.Rooms {
 				hub.mu.Lock()
@@ -299,7 +296,6 @@ func (h *RoomHub) Run() {
 				select {
 				case client.Send <- message:
 				default:
-					// Failed to send, assume client disconnected
 					go func(c *Client) { h.Manager.Unregister <- c }(client)
 				}
 			}
@@ -330,7 +326,6 @@ func (c *Client) readPump() {
 
 		switch msg.Type {
 		case "joinRoom":
-			// Check if user is allowed in room
 			if !isUserInRoom(c.ID, msg.RoomID) {
 				log.Printf("Auth error: User %d tried to join room %d", c.ID, msg.RoomID)
 				c.Send <- &WSMessage{Type: "error", Content: "Not authorized for this room"}
@@ -352,7 +347,6 @@ func (c *Client) readPump() {
 				continue
 			}
 
-			// Save message to DB
 			var savedMsg Message
 			err := db.QueryRow(
 				"INSERT INTO messages (room_id, sender_id, content) VALUES ($1, $2, $3) RETURNING id, room_id, sender_id, content, created_at",
@@ -364,15 +358,14 @@ func (c *Client) readPump() {
 				continue
 			}
 
-			// Populate sender info for broadcast
 			savedMsg.Sender = c.Username
 			savedMsg.Avatar = c.Avatar
-			savedMsg.Read = false // Default read status
+			savedMsg.Read = false 
 
-			// Get the hub and broadcast
 			hub := c.Manager.GetOrCreateRoomHub(msg.RoomID)
 			hub.Broadcast <- &WSMessage{
 				Type:    "roomMessage",
+				RoomID:   savedMsg.RoomID, 
 				Message: &savedMsg,
 			}
 		}
@@ -449,7 +442,6 @@ func authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Add claims to request context
 		ctx := r.Context()
 		ctx = context.WithValue(ctx, "user_id", claims["user_id"].(float64))
 		ctx = context.WithValue(ctx, "username", claims["username"].(string))
@@ -479,7 +471,13 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	// ... (rest of register logic is unchanged)
+
+	// Validate input
+	if req.Username == "" || req.Email == "" || req.Password == "" {
+		http.Error(w, "Username, email, and password are required", http.StatusBadRequest)
+		return
+	}
+
 	hashed := hashPassword(req.Password)
 	var userID int
 	err := db.QueryRow(
@@ -488,7 +486,22 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	).Scan(&userID)
 
 	if err != nil {
-		http.Error(w, "User already exists", http.StatusConflict)
+		// Check if it's a PostgreSQL unique constraint violation
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
+			// 23505 is the PostgreSQL error code for unique_violation
+			if pqErr.Constraint == "users_username_key" {
+				http.Error(w, "Username already taken", http.StatusConflict)
+				return
+			} else if pqErr.Constraint == "users_email_key" {
+				http.Error(w, "Email already registered", http.StatusConflict)
+				return
+			}
+			http.Error(w, "User already exists", http.StatusConflict)
+			return
+		}
+		// Other database errors
+		log.Printf("Registration error: %v", err)
+		http.Error(w, "Registration failed. Please try again.", http.StatusInternalServerError)
 		return
 	}
 
@@ -510,7 +523,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	// ... (rest of login logic is unchanged)
+
 	var userID int
 	var hash string
 	err := db.QueryRow(
@@ -549,15 +562,13 @@ func handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 
 	userID := int(r.Context().Value("user_id").(float64))
 
-	// Start transaction
 	tx, err := db.Begin()
 	if err != nil {
 		http.Error(w, "Server error", http.StatusInternalServerError)
 		return
 	}
-	defer tx.Rollback() // Rollback if anything fails
+	defer tx.Rollback() 
 
-	// 1. Create room
 	var roomID int
 	var createdAt time.Time
 	err = tx.QueryRow(
@@ -571,7 +582,6 @@ func handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Add creator as admin member
 	_, err = tx.Exec(
 		"INSERT INTO room_members (room_id, user_id, role) VALUES ($1, $2, $3)",
 		roomID, userID, "admin",
@@ -582,7 +592,6 @@ func handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Insert System Message ("{{username}} created the room.")
 	currentTime := time.Now()
 	formattedTime := currentTime.Format(SystemMessageTimeFormat)
 
@@ -607,7 +616,6 @@ func handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Broadcast the system message via WebSocket
 	hub := roomManager.GetOrCreateRoomHub(roomID)
 	savedMsg.Sender = "System"
 	savedMsg.Avatar = "S"
@@ -615,10 +623,10 @@ func handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 
 	hub.Broadcast <- &WSMessage{
 		Type:    "roomMessage",
+		RoomID:   savedMsg.RoomID, 
 		Message: &savedMsg,
 	}
 
-	// 5. Return the new room object
 	newRoom := Room{
 		ID:          roomID,
 		Name:        req.Name,
@@ -650,7 +658,6 @@ func handleJoinRoom(w http.ResponseWriter, r *http.Request) {
 	userID := int(r.Context().Value("user_id").(float64))
 	username := r.Context().Value("username").(string)
 
-	// 1. Check if room exists and get details
 	var room Room
 	var membersCount int
 	err = db.QueryRow(`
@@ -668,13 +675,11 @@ func handleJoinRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Check if user is already a member
 	if isUserInRoom(userID, roomID) {
 		http.Error(w, "Already a member of this room", http.StatusConflict)
 		return
 	}
 
-	// 3. Start transaction for JOIN and SYSTEM MESSAGE
 	tx, err := db.Begin()
 	if err != nil {
 		http.Error(w, "Server error", http.StatusInternalServerError)
@@ -682,7 +687,6 @@ func handleJoinRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	// 3a. Add user to room_members
 	_, err = tx.Exec(
 		"INSERT INTO room_members (room_id, user_id, role) VALUES ($1, $2, $3)",
 		roomID, userID, "member",
@@ -693,17 +697,15 @@ func handleJoinRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3b. Add a system message ("{{username}} joined the room at 3:04 PM on Jan 2, 2006.")
 	currentTime := time.Now()
 	formattedTime := currentTime.Format(SystemMessageTimeFormat)
 	systemMessageContent := fmt.Sprintf("%s joined this room at %s.", username, formattedTime)
 
-	// For simplicity, we assume sender_id=1 is the system.
 	var savedMsg Message
-	_, err = tx.Exec(
-		"INSERT INTO messages (room_id, sender_id, content) VALUES ($1, $2, $3)",
+	err = tx.QueryRow(
+		"INSERT INTO messages (room_id, sender_id, content) VALUES ($1, $2, $3) RETURNING id, room_id, sender_id, content, created_at",
 		roomID, 1, systemMessageContent,
-	)
+	).Scan(&savedMsg.ID, &savedMsg.RoomID, &savedMsg.SenderID, &savedMsg.Text, &savedMsg.Timestamp)
 	if err != nil {
 		log.Printf("Failed to add system message: %v", err)
 		http.Error(w, "Failed to join room (message fail)", http.StatusInternalServerError)
@@ -715,24 +717,22 @@ func handleJoinRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Prepare and Broadcast System Message via WebSocket
 	hub := roomManager.GetOrCreateRoomHub(roomID)
 
-	// Populate sender info for broadcast
 	savedMsg.Sender = "System"
-	savedMsg.Avatar = "S" // Avatar for System user
+	savedMsg.Avatar = "S" 
 	savedMsg.Read = false
 
 	hub.Broadcast <- &WSMessage{
 		Type:     "roomMessage",
+		RoomID:   savedMsg.RoomID,
 		Message:  &savedMsg,
 	}
 	log.Printf("Broadcasted system message to room %d: %s", roomID, savedMsg.Text)
 
-	// 5. Return the full Room object with updated details
-	room.Members = membersCount + 1 // Reflect the new member
+	room.Members = membersCount + 1 
 	room.Avatar = string(room.Name[0])
-	room.LastMessage = fmt.Sprintf("You joined this room at %s.", formattedTime) // Set client-side message
+	room.LastMessage = fmt.Sprintf("You joined this room at %s.", formattedTime)
 	room.LastMessageTime = currentTime.Format("3:04 PM")
 	room.Unread = 0
 	room.IsPrivate = false
@@ -747,15 +747,23 @@ func handleGetRooms(w http.ResponseWriter, r *http.Request) {
     rooms := []Room{}
 
     rows, err := db.Query(`
-        SELECT 
+        SELECT
             r.id, r.name, r.description, r.created_by, r.created_at, r.is_private,
             (SELECT COUNT(*) FROM room_members WHERE room_id = r.id) AS members_count,
             lm.content,
             lm.created_at,
 			lm.sender_id,
-            -- NOTE: For simplicity, unread count is hardcoded to 0 in the Go scan for now, 
-            -- but you would calculate it here in production.
-            0 AS unread_count 
+            -- Calculate unread count: messages not sent by user and not in message_reads
+            (
+                SELECT COUNT(*)
+                FROM messages m
+                WHERE m.room_id = r.id
+                    AND m.sender_id != $1  -- Exclude own messages
+                    AND NOT EXISTS (
+                        SELECT 1 FROM message_reads mr
+                        WHERE mr.message_id = m.id AND mr.user_id = $1
+                    )
+            ) AS unread_count
         FROM rooms r
         JOIN room_members rm ON rm.room_id = r.id
         LEFT JOIN (
@@ -780,7 +788,6 @@ func handleGetRooms(w http.ResponseWriter, r *http.Request) {
         var membersCount int
         var unreadCount int
         
-        // Use sql.Null types to handle potential NULL values from the LEFT JOIN
         var lastMessage sql.NullString
         var lastMessageTime sql.NullTime
 		var lastSenderID sql.NullInt64
@@ -791,31 +798,24 @@ func handleGetRooms(w http.ResponseWriter, r *http.Request) {
             &lastMessage,
             &lastMessageTime,
 			&lastSenderID,
-            &unreadCount, // Scanning the unread_count column
+            &unreadCount, 
         ); err != nil {
             log.Println("Error scanning room:", err)
             continue
         }
         
-        // --- Process and format data ---
-
-        // Assign numeric values
         room.Members = membersCount
         room.Unread = unreadCount
 
-        // Assign actual message content, handling NULL
         if lastMessage.Valid {
             room.LastMessage = lastMessage.String
         } else {
-            // For rooms with NO messages (but the user has joined), show status
             room.LastMessage = "No messages yet." 
         }
 
-        // Assign actual timestamp, handling NULL
         if lastMessageTime.Valid {
             room.LastMessageTime = lastMessageTime.Time.Format("3:04 PM")
         } else {
-            // If no messages exist, use a placeholder time like room creation time
             room.LastMessageTime = room.CreatedAt.Format("3:04 PM") 
         }
 
@@ -845,7 +845,6 @@ func handleGetRoomMessages(w http.ResponseWriter, r *http.Request) {
 
 	userID := int(r.Context().Value("user_id").(float64))
 
-	// Check if user is in the room
 	if !isUserInRoom(userID, roomID) {
 		http.Error(w, "Not authorized", http.StatusForbidden)
 		return
@@ -874,7 +873,7 @@ func handleGetRoomMessages(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		m.Avatar = string(m.Sender[0])
-		m.Read = true // Assume all historical messages are read
+		m.Read = true
 		messages = append(messages, m)
 	}
 
@@ -882,14 +881,241 @@ func handleGetRoomMessages(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(messages)
 }
 
+// Mark all messages in a room as read for the current user
+func handleMarkRoomAsRead(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	roomID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		http.Error(w, "Invalid room ID", http.StatusBadRequest)
+		return
+	}
+
+	userID := int(r.Context().Value("user_id").(float64))
+
+	if !isUserInRoom(userID, roomID) {
+		http.Error(w, "Not authorized", http.StatusForbidden)
+		return
+	}
+
+	result, err := db.Exec(`
+		INSERT INTO message_reads (message_id, user_id)
+		SELECT m.id, $1
+		FROM messages m
+		WHERE m.room_id = $2
+			AND m.sender_id != $1  -- Don't mark own messages
+			AND NOT EXISTS (
+				SELECT 1 FROM message_reads mr
+				WHERE mr.message_id = m.id AND mr.user_id = $1
+			)
+		ON CONFLICT (message_id, user_id) DO NOTHING
+	`, userID, roomID)
+
+	if err != nil {
+		log.Printf("Failed to mark messages as read: %v", err)
+		http.Error(w, "Failed to mark messages as read", http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+
+	if rowsAffected > 0 {
+		hub := roomManager.GetOrCreateRoomHub(roomID)
+		hub.Broadcast <- &WSMessage{
+			Type:   "messagesRead",
+			RoomID: roomID,
+		}
+		log.Printf("User %d marked %d messages as read in room %d", userID, rowsAffected, roomID)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+}
+
+// Get all members of a specific room
+func handleGetRoomMembers(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	roomID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		http.Error(w, "Invalid room ID", http.StatusBadRequest)
+		return
+	}
+
+	userID := int(r.Context().Value("user_id").(float64))
+
+	if !isUserInRoom(userID, roomID) {
+		http.Error(w, "Not authorized", http.StatusForbidden)
+		return
+	}
+
+	rows, err := db.Query(`
+		SELECT u.id, u.username, u.email, rm.role, rm.joined_at
+		FROM room_members rm
+		JOIN users u ON rm.user_id = u.id
+		WHERE rm.room_id = $1
+		ORDER BY
+			CASE rm.role
+				WHEN 'admin' THEN 1
+				ELSE 2
+			END,
+			rm.joined_at ASC
+	`, roomID)
+
+	if err != nil {
+		log.Printf("Failed to get room members: %v", err)
+		http.Error(w, "Failed to get room members", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	type RoomMember struct {
+		ID       int       `json:"id"`
+		Username string    `json:"username"`
+		Email    string    `json:"email"`
+		Avatar   string    `json:"avatar"`
+		Role     string    `json:"role"`
+		JoinedAt time.Time `json:"joined_at"`
+	}
+
+	var members []RoomMember
+	for rows.Next() {
+		var m RoomMember
+		if err := rows.Scan(&m.ID, &m.Username, &m.Email, &m.Role, &m.JoinedAt); err != nil {
+			log.Printf("Error scanning member: %v", err)
+			continue
+		}
+		m.Avatar = string(m.Username[0])
+		members = append(members, m)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(members)
+}
+
+// Remove a member from a room (admin only)
+func handleRemoveMember(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	roomID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		http.Error(w, "Invalid room ID", http.StatusBadRequest)
+		return
+	}
+
+	memberID, err := strconv.Atoi(vars["memberId"])
+	if err != nil {
+		http.Error(w, "Invalid member ID", http.StatusBadRequest)
+		return
+	}
+
+	userID := int(r.Context().Value("user_id").(float64))
+
+	var role string
+	err = db.QueryRow("SELECT role FROM room_members WHERE room_id = $1 AND user_id = $2", roomID, userID).Scan(&role)
+	if err != nil || role != "admin" {
+		http.Error(w, "Only admins can remove members", http.StatusForbidden)
+		return
+	}
+
+	if memberID == userID {
+		http.Error(w, "Cannot remove yourself. Use leave room instead", http.StatusBadRequest)
+		return
+	}
+
+	result, err := db.Exec("DELETE FROM room_members WHERE room_id = $1 AND user_id = $2", roomID, memberID)
+	if err != nil {
+		log.Printf("Failed to remove member: %v", err)
+		http.Error(w, "Failed to remove member", http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		http.Error(w, "Member not found in room", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+}
+
+// Delete a room (admin only)
+func handleDeleteRoom(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	roomID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		http.Error(w, "Invalid room ID", http.StatusBadRequest)
+		return
+	}
+
+	userID := int(r.Context().Value("user_id").(float64))
+
+	var role string
+	err = db.QueryRow("SELECT role FROM room_members WHERE room_id = $1 AND user_id = $2", roomID, userID).Scan(&role)
+	if err != nil || role != "admin" {
+		http.Error(w, "Only admins can delete rooms", http.StatusForbidden)
+		return
+	}
+
+	_, err = db.Exec("DELETE FROM rooms WHERE id = $1", roomID)
+	if err != nil {
+		log.Printf("Failed to delete room: %v", err)
+		http.Error(w, "Failed to delete room", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Room %d deleted by user %d", roomID, userID)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+}
+
+// Leave a room
+func handleLeaveRoom(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	roomID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		http.Error(w, "Invalid room ID", http.StatusBadRequest)
+		return
+	}
+
+	userID := int(r.Context().Value("user_id").(float64))
+
+	var adminCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM room_members WHERE room_id = $1 AND role = 'admin'", roomID).Scan(&adminCount)
+	if err != nil {
+		http.Error(w, "Server error", http.StatusInternalServerError)
+		return
+	}
+
+	var userRole string
+	err = db.QueryRow("SELECT role FROM room_members WHERE room_id = $1 AND user_id = $2", roomID, userID).Scan(&userRole)
+	if err != nil {
+		http.Error(w, "You are not a member of this room", http.StatusForbidden)
+		return
+	}
+
+	if userRole == "admin" && adminCount == 1 {
+		http.Error(w, "Cannot leave: You are the only admin. Delete the room or promote another member first", http.StatusBadRequest)
+		return
+	}
+
+	_, err = db.Exec("DELETE FROM room_members WHERE room_id = $1 AND user_id = $2", roomID, userID)
+	if err != nil {
+		log.Printf("Failed to leave room: %v", err)
+		http.Error(w, "Failed to leave room", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("User %d left room %d", userID, roomID)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+}
+
 // Fetches all public/open rooms that the current user has NOT joined.
 func handleGetAllRooms(w http.ResponseWriter, r *http.Request) {
-    // 1. Get User ID from Context
     userIDFloat := r.Context().Value("user_id").(float64)
     userID := int(userIDFloat)
 
-    // 2. Database Query: Simplified for schema without 'is_private'
-    // This query selects all rooms that the user ($1) is NOT a member of.
     query := `
         SELECT 
             r.id, r.name, r.description,
@@ -912,17 +1138,14 @@ func handleGetAllRooms(w http.ResponseWriter, r *http.Request) {
         var r Room
         var membersCount int
 
-        // 3. Scan only the necessary fields
         if err := rows.Scan(&r.ID, &r.Name, &r.Description, &membersCount); err != nil {
             log.Println("Error scanning explorable room:", err)
             continue
         }
         
-        // Populate required fields for the frontend exploration view
         r.Members = membersCount
-        r.Avatar = string(r.Name[0]) // Avatar is the first letter of the name
+        r.Avatar = string(r.Name[0])
 
-        // Set other fields to default/empty values to keep the Room struct structure consistent
         r.CreatedBy = 0 
         r.IsPrivate = false 
         r.LastMessage = ""
@@ -932,10 +1155,8 @@ func handleGetAllRooms(w http.ResponseWriter, r *http.Request) {
         explorableRooms = append(explorableRooms, r)
     }
 
-    // 4. JSON Response
     w.Header().Set("Content-Type", "application/json")
     
-    // Ensure we send '[]' for an empty list
     if len(explorableRooms) == 0 {
         w.Write([]byte("[]"))
         return
@@ -1018,13 +1239,17 @@ func main() {
 	api.HandleFunc("/rooms", handleCreateRoom).Methods("POST", "OPTIONS")
 	api.HandleFunc("/rooms", handleGetRooms).Methods("GET", "OPTIONS")
 	api.HandleFunc("/rooms/{id}/messages", handleGetRoomMessages).Methods("GET", "OPTIONS")
+	api.HandleFunc("/rooms/{id}/members", handleGetRoomMembers).Methods("GET", "OPTIONS")
+	api.HandleFunc("/rooms/{id}/members/{memberId}", handleRemoveMember).Methods("DELETE", "OPTIONS")
+	api.HandleFunc("/rooms/{id}/read", handleMarkRoomAsRead).Methods("POST", "OPTIONS")
+	api.HandleFunc("/rooms/{id}", handleDeleteRoom).Methods("DELETE", "OPTIONS")
+	api.HandleFunc("/rooms/{id}/leave", handleLeaveRoom).Methods("POST", "OPTIONS")
 	api.HandleFunc("/rooms/explore", handleGetAllRooms).Methods("GET", "OPTIONS")
-	api.HandleFunc("/rooms/{id}/join", handleJoinRoom).Methods("POST", "OPTIONS") // <-- ADD THIS
+	api.HandleFunc("/rooms/{id}/join", handleJoinRoom).Methods("POST", "OPTIONS")
 
 	// WebSocket route (token passed as query param, so no middleware)
 	r.HandleFunc("/ws", handleWebSocket)
 
-	// Add CORS
 	http.Handle("/", enableCORS(r))
 
 	port := getEnv("PORT", "8080")

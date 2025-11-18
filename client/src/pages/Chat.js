@@ -7,8 +7,9 @@ import RoomInfoPanel from '../components/RoomInfoPanel';
 import RoomModal from '../components/RoomModal';
 import ExploreRoomsList from '../components/ExploreRoomsList';
 
-import { getRooms, getRoomMessages, joinRoom } from '../utils/api';
+import { getRooms, getRoomMessages, joinRoom, markRoomAsRead } from '../utils/api';
 import { getToken, getUser, removeAuth } from '../utils/auth';
+import { formatTime } from '../utils/messageUtils';
 
 import "../styles/Chat.css"
 
@@ -22,15 +23,20 @@ export default function Chat() {
   const [currentUser, setCurrentUser] = useState({ id: 0, username: 'User', avatar: 'U' });
   const [rooms, setRooms] = useState([]);
   const [messages, setMessages] = useState([]);
-  const [showCreateModal, setShowCreateModal] = useState(false); 
+  const messagesCache = useRef({}); 
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const ws = useRef(null);
+  const activeRoomIdRef = useRef(activeRoomId); 
   const [currentView, setCurrentView] = useState('joined');
+
+  useEffect(() => {
+    activeRoomIdRef.current = activeRoomId;
+  }, [activeRoomId]);
 
   useEffect(() => {
     const handleResize = () => {
       const mobile = window.innerWidth < 768;
       setIsMobile(mobile);
-      // If resizing to desktop, always close room info if it was open on mobile
       if (!mobile) {
         setShowRoomInfo(false);
       }
@@ -42,16 +48,12 @@ export default function Chat() {
 
   const navigate = useNavigate();
 
-  // --- Utility for Handling Expired Tokens ---
   const handleAuthError = (error) => {
     if (error.message.includes("Invalid token") || error.message.includes("is not authenticated")) {        
-        // 1. Clear token/user data from localStorage
         removeAuth();
 
-        // 2. Redirect to the login page
         navigate('/login');
         
-        // Close WebSocket if it was open on a bad token
         if (ws.current && ws.current.readyState === WebSocket.OPEN) {
             ws.current.close();
         }
@@ -62,7 +64,6 @@ export default function Chat() {
 
   // --- Initial Data Loading & User Info ---
   useEffect(() => {
-    // 1. Get Logged in User Data
     const loggedUser = getUser();
     if (loggedUser) {
         setCurrentUser(loggedUser);
@@ -71,7 +72,6 @@ export default function Chat() {
         return;
     }
 
-    // 2. Fetch Rooms
     const fetchRooms = async () => {
       try {
         const fetchedRooms = await getRooms();
@@ -85,78 +85,194 @@ export default function Chat() {
       }
     };
     fetchRooms();
-  }, []); // Empty dependency array means this runs once on mount
+  }, []); 
 
-  // --- WebSocket Setup ---
+  // --- WebSocket Setup (Persistent Connection) ---
   useEffect(() => {
     const token = getToken();
     if (!token) return;
 
-    const WS_URL = `ws://localhost:8080/ws?token=${token}`; 
+    const WS_URL = `ws://localhost:8080/ws?token=${token}`;
 
     ws.current = new WebSocket(WS_URL);
 
     ws.current.onopen = () => {
-      console.log('WebSocket connected');
-
-      if (activeRoomId) {
-        ws.current.send(JSON.stringify({ type: 'joinRoom', room_id: activeRoomId }));
+      if (activeRoomIdRef.current) {
+        ws.current.send(JSON.stringify({ type: 'joinRoom', room_id: activeRoomIdRef.current }));
       }
     };
 
     ws.current.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      console.log('WS Message received:', data);
 
-      if (data.type === 'roomMessage' && data.Message) {
-        // Map the Go Message struct to your React Message format
+      if (data.type === 'roomMessage') {
         const newMessage = {
-            id: data.Message.id,
-            senderId: data.Message.sender_id,
-            sender: data.Message.sender,
-            text: data.Message.text,
-            timestamp: new Date(data.Message.timestamp).toLocaleTimeString(),
-            avatar: data.Message.avatar,
+            id: data.id,
+            roomId: data.room_id,
+            senderId: data.sender_id,
+            sender: data.sender,
+            text: data.text,
+            timestamp: formatTime(new Date(data.timestamp)),
+            avatar: data.avatar,
             read: true,
+            isOptimistic: false,
         };
 
-        setMessages(prev => {
-            // Only add if it belongs to the active room
-            if (activeRoomId === data.Message.room_id) {
-                return [...prev, newMessage];
-            }
-            return prev;
-        });
+        const roomId = newMessage.roomId;
+        const currentRoomMessages = messagesCache.current[roomId] || [];
+        const isOwnMessage = newMessage.senderId === currentUser.id;
 
-        // OPTIONAL: Update room's last message in the rooms list
-        setRooms(prevRooms => prevRooms.map(r => r.id === data.Message.room_id ? { ...r, lastMessage: data.Message.text, lastMessageTime: 'Just now' } : r));
+        let updatedRoomMessages;
+        if (isOwnMessage) {
+          const filtered = currentRoomMessages.filter(m =>
+            !(m.isOptimistic && m.text === newMessage.text && m.senderId === currentUser.id)
+          );
+          const alreadyExists = filtered.some(m => m.id === newMessage.id);
+          updatedRoomMessages = alreadyExists ? filtered : [...filtered, newMessage];
+        } else {
+          const alreadyExists = currentRoomMessages.some(m => m.id === newMessage.id);
+          updatedRoomMessages = alreadyExists ? currentRoomMessages : [...currentRoomMessages, newMessage];
+        }
+
+        messagesCache.current[roomId] = updatedRoomMessages;
+
+        if (activeRoomIdRef.current === roomId) {
+          setMessages(updatedRoomMessages);
+        }
+
+        setRooms(prevRooms => {
+          const isCurrentlyActiveRoom = activeRoomIdRef.current === roomId;
+          const isOwnMessage = newMessage.senderId === currentUser.id;
+
+          const updatedRooms = prevRooms.map(r => {
+            if (r.id === roomId) {
+              const shouldIncrementUnread = !isCurrentlyActiveRoom && !isOwnMessage;
+              return {
+                ...r,
+                lastMessage: newMessage.text,
+                lastMessageTime: 'Just now',
+                lastSenderId: newMessage.senderId,
+                unread: shouldIncrementUnread ? (r.unread || 0) + 1 : r.unread
+              };
+            }
+            return r;
+          });
+
+          const roomWithMessage = updatedRooms.find(r => r.id === roomId);
+          const otherRooms = updatedRooms.filter(r => r.id !== roomId);
+
+          return roomWithMessage ? [roomWithMessage, ...otherRooms] : updatedRooms;
+        });
+      } else if (data.type === 'error') {
+        console.error('WebSocket error:', data.content);
+        if (activeRoomIdRef.current) {
+          const filtered = messages.filter(m => !m.isOptimistic);
+          messagesCache.current[activeRoomIdRef.current] = filtered;
+          setMessages(filtered);
+        }
       }
     };
 
-    ws.current.onclose = () => {
-      console.log('WebSocket closed');
+    ws.current.onclose = (event) => {
+      if (event.code !== 1000) {
+        setTimeout(() => {
+          const token = getToken();
+          if (!token) return;
+
+          const WS_URL = `ws://localhost:8080/ws?token=${token}`;
+          ws.current = new WebSocket(WS_URL);
+
+          ws.current.onopen = () => {
+            if (activeRoomIdRef.current) {
+              ws.current.send(JSON.stringify({ type: 'joinRoom', room_id: activeRoomIdRef.current }));
+            }
+          };
+
+          ws.current.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+
+            if (data.type === 'roomMessage') {
+              const newMessage = {
+                  id: data.id,
+                  roomId: data.room_id,
+                  senderId: data.sender_id,
+                  sender: data.sender,
+                  text: data.text,
+                  timestamp: formatTime(new Date(data.timestamp)),
+                  avatar: data.avatar,
+                  read: true,
+                  isOptimistic: false,
+              };
+
+              const roomId = newMessage.roomId;
+              const currentRoomMessages = messagesCache.current[roomId] || [];
+              const isOwnMessage = newMessage.senderId === currentUser.id;
+
+              let updatedRoomMessages;
+              if (isOwnMessage) {
+                const filtered = currentRoomMessages.filter(m =>
+                  !(m.isOptimistic && m.text === newMessage.text && m.senderId === currentUser.id)
+                );
+                const alreadyExists = filtered.some(m => m.id === newMessage.id);
+                updatedRoomMessages = alreadyExists ? filtered : [...filtered, newMessage];
+              } else {
+                const alreadyExists = currentRoomMessages.some(m => m.id === newMessage.id);
+                updatedRoomMessages = alreadyExists ? currentRoomMessages : [...currentRoomMessages, newMessage];
+              }
+
+              messagesCache.current[roomId] = updatedRoomMessages;
+
+              if (activeRoomIdRef.current === roomId) {
+                setMessages(updatedRoomMessages);
+              }
+
+              setRooms(prevRooms => prevRooms.map(r =>
+                  r.id === roomId
+                      ? { ...r, lastMessage: newMessage.text, lastMessageTime: 'Just now', lastSenderId: newMessage.senderId }
+                      : r
+              ));
+            } else if (data.type === 'error') {
+              console.error('WebSocket error from server:', data.content);
+              if (activeRoomIdRef.current) {
+                const filtered = messages.filter(m => !m.isOptimistic);
+                messagesCache.current[activeRoomIdRef.current] = filtered;
+                setMessages(filtered);
+              }
+            }
+          };
+
+          ws.current.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            setMessages(prev => prev.filter(m => !m.isOptimistic));
+          };
+
+          ws.current.onclose = (event) => {
+          };
+        }, 3000);
+      }
     };
 
     ws.current.onerror = (error) => {
       console.error('WebSocket error:', error);
+      setMessages(prev => prev.filter(m => !m.isOptimistic));
     };
 
-    // --- CRITICAL CLEANUP FUNCTION ---
     return () => {
-        // If the connection is open or connecting, close it gracefully.
-        // This runs when the component unmounts OR when React Strict Mode cleans up the effect.
-        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-            ws.close(1000, "Component unmount/cleanup"); // Use 1000 for normal closure
-            console.log("WebSocket cleanup: closed connection.");
+        if (ws.current && (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING)) {
+            ws.current.close(1000, "Component unmount");
         }
     };
+  }, []);
+
+  useEffect(() => {
+    if (activeRoomId && ws.current && ws.current.readyState === WebSocket.OPEN) {
+      ws.current.send(JSON.stringify({ type: 'joinRoom', room_id: activeRoomId }));
+    }
   }, [activeRoomId]);
 
-  // --- Room Selection and Message Fetching ---
   const fetchMessages = useCallback(async (roomId) => {
     try {
       const fetchedMessages = await getRoomMessages(roomId);
-      // Map the Go Message struct fields to your frontend fields
       const formattedMessages = fetchedMessages.map(m => ({
         id: m.id,
         senderId: m.sender_id,
@@ -165,16 +281,29 @@ export default function Chat() {
         timestamp: new Date(m.timestamp).toLocaleTimeString(),
         avatar: m.avatar,
         read: true,
+        isOptimistic: false, 
       }));
       setMessages(formattedMessages);
+
+      messagesCache.current[roomId] = formattedMessages;
+
+      try {
+        await markRoomAsRead(roomId);
+        setRooms(prevRooms => prevRooms.map(r =>
+          r.id === roomId ? { ...r, unread: 0 } : r
+        ));
+      } catch (error) {
+        console.error("Failed to mark room as read:", error);
+      }
 
       setActiveRoomId(roomId);
 
     } catch (error) {
       console.error("Failed to fetch messages:", error);
       setMessages([]);
+      messagesCache.current[roomId] = [];
     }
-  }, []);
+  }, [setRooms]);
 
 
   // --- Event Handlers ---
@@ -184,19 +313,30 @@ export default function Chat() {
       return;
     }
 
+    const optimisticMessage = {
+      id: `temp-${Date.now()}`, 
+      senderId: currentUser.id,
+      sender: currentUser.username,
+      text: text,
+      timestamp: new Date().toLocaleTimeString(),
+      avatar: currentUser.avatar,
+      read: false, 
+      isOptimistic: true,
+    };
+
+    setMessages(prev => [...prev, optimisticMessage]);
+
     const messagePayload = {
       type: 'sendMessage',
       room_id: activeRoomId,
       content: text,
     };
-    
+
     ws.current.send(JSON.stringify(messagePayload));
   };
   
   const handleRoomCreated = (newRoom) => {
-    // Add the new room to the state instantly
     setRooms(prevRooms => [newRoom, ...prevRooms]);
-    // Optionally set it as active
     setActiveRoomId(newRoom.id);
     fetchMessages(newRoom.id);
   };
@@ -204,21 +344,14 @@ export default function Chat() {
   const activeRoom = rooms.find(r => r.id === activeRoomId);
   const currentLoggedUser = currentUser;
   
-  // Recalculate isMobile for RoomInfoPanel prop
-  // This is a bit redundant but ensures the prop is correct
-  // We can simplify this logic.
-  const isMobileView = window.innerWidth < 768;
-
 
   const handleRoomSelect = (roomId) => {
-    setActiveRoomId(roomId);
+    fetchMessages(roomId);
     setShowSidebar(false);
 
     if (isMobile) {
-      // On mobile: hide room info (space is limited)
       setShowRoomInfo(false);
     } else {
-      // On desktop: automatically show room info when a room is selected
       setShowRoomInfo(true);
     }
   };
@@ -230,9 +363,39 @@ export default function Chat() {
   
   const handleToggleRoomInfo = () => {
     setShowRoomInfo(prev => !prev);
-  }
+  };
 
-  // Mobile/Desktop layout logic
+  const handleRoomDeleted = (roomId) => {
+    setRooms(prevRooms => prevRooms.filter(r => r.id !== roomId));
+    setActiveRoomId(null);
+    setShowRoomInfo(false);
+    if (isMobile) {
+      setShowSidebar(true);
+    }
+  };
+
+  const handleRoomLeft = (roomId) => {
+    setRooms(prevRooms => prevRooms.filter(r => r.id !== roomId));
+    setActiveRoomId(null);
+    setShowRoomInfo(false);
+    if (isMobile) {
+      setShowSidebar(true);
+    }
+  };
+
+  const handleLogout = () => {
+    // Close WebSocket connection
+    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+      ws.current.close(1000, "User logged out");
+    }
+
+    // Clear authentication data
+    removeAuth();
+
+    // Navigate to login page
+    navigate('/login');
+  };
+
   const showLeftPanel = !isMobile || (isMobile && !activeRoomId);
   const showMiddlePanel = !isMobile || (isMobile && activeRoomId);
   const showRightPanel = showRoomInfo && (!isMobile || (isMobile && activeRoomId));
@@ -247,17 +410,13 @@ export default function Chat() {
 
 const handleJoinRoom = async (roomId) => {
     try {
-      // 1. API call to join the room, returns the full room object
       const newRoom = await joinRoom(roomId); 
 
-      // 2. Update the joined rooms list by appending the new room
       setRooms(prevRooms => [newRoom, ...prevRooms]);
 
-      // 3. Switch back to the joined view and select the new room
       setActiveRoomId(roomId);
       setCurrentView('joined');
       
-      // OPTIONAL: If on mobile, close the sidebar
       if (isMobile) {
         setShowSidebar(false);
       }
@@ -266,7 +425,6 @@ const handleJoinRoom = async (roomId) => {
       console.error("Failed to join room:", error);
       if (handleAuthError(error)) return;
       
-      // Handle other join errors (e.g., already a member)
       alert(`Could not join room: ${error.message}`);
     }
   };
@@ -281,17 +439,17 @@ const handleJoinRoom = async (roomId) => {
       );
     }
     
-    // Default: 'joined' view
     return (
       <Sidebar
         rooms={rooms}
         activeRoomId={activeRoomId}
         onRoomSelect={handleRoomSelect}
         onNewRoom={() => setShowCreateModal(true)}
-        onViewExplore={handleViewExplore} // New prop name used here
+        onViewExplore={handleViewExplore}
         isMobile={isMobile}
         onClose={() => setShowSidebar(false)}
         currentUser={currentLoggedUser}
+        onLogout={handleLogout}
       />
     );
   };
@@ -299,12 +457,10 @@ const handleJoinRoom = async (roomId) => {
   return (
     <div className="chat-app">
       
-      {/* Sidebar - Desktop always visible, Mobile conditional */}
       {showLeftPanel && (
         renderSidebar()
       )}
 
-      {/* Chat Room - Desktop always visible, Mobile conditional */}
       {showMiddlePanel &&  (
         <ChatRoom
           room={activeRoom}
@@ -318,15 +474,15 @@ const handleJoinRoom = async (roomId) => {
         />
       )}
 
-      {/* Room Info Panel - Desktop sidebar, Mobile overlay */}
       {showRightPanel && activeRoom && (
         <RoomInfoPanel
           room={activeRoom}
-          members={[]}
           isOpen={showRoomInfo}
           onClose={() => setShowRoomInfo(false)}
           currentUser={currentLoggedUser}
           isMobile={isMobile}
+          onRoomDeleted={handleRoomDeleted}
+          onRoomLeft={handleRoomLeft}
         />
       )}
 

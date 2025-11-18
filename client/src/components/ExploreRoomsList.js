@@ -61,7 +61,7 @@ const ExploreRoomsList = ({ onBack, onJoin }) => {
     return exploreRooms.map(room => (
       <div key={room.id} className="explore-room-item">
         <div className="explore-room-item__info">
-          <Avatar size="md">{room.avatar}</Avatar>
+          <Avatar size="md" username={room.name}>{room.avatar}</Avatar>
           <div className="explore-room-item__content">
             <h3 className="explore-room-item__name">
               {room.name} 
